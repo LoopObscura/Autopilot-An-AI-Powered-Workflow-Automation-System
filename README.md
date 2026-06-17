@@ -58,7 +58,7 @@ Small teams spend **hours per week** on manual, repetitive tasks. AutoPilot solv
 ### Core Components
 
 | Component | Technology | Purpose |
-|-----------|-----------|---------|
+|-----------|-----------|----------|
 | **AI Agents** | LangGraph, LangChain, OpenAI | Multi-agent orchestration and reasoning |
 | **Backend** | FastAPI, Python 3.10+ | REST API endpoints and webhook handlers |
 | **Task Queue** | Celery, Redis | Asynchronous task processing |

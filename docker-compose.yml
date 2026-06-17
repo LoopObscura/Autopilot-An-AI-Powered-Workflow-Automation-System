@@ -1,0 +1,201 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16-alpine
+    container_name: autopilot-postgres
+    environment:
+      POSTGRES_USER: autopilot
+      POSTGRES_PASSWORD: autopilot_password
+      POSTGRES_DB: autopilot_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autopilot"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - autopilot-network
+
+  # Redis Message Queue
+  redis:
+    image: redis:7-alpine
+    container_name: autopilot-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - autopilot-network
+
+  # Qdrant Vector Database
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: autopilot-qdrant
+    environment:
+      QDRANT_API_KEY: ${QDRANT_API_KEY:-qdrant-api-key}
+    volumes:
+      - qdrant_data:/qdrant/storage
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - autopilot-network
+
+  # Jaeger for Distributed Tracing
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: autopilot-jaeger
+    environment:
+      COLLECTOR_ZIPKIN_HOST_PORT: :9411
+    ports:
+      - "5775:5775/udp"
+      - "6831:6831/udp"
+      - "6832:6832/udp"
+      - "5778:5778"
+      - "16686:16686"
+      - "14268:14268"
+      - "14250:14250"
+      - "9411:9411"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:14269"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - autopilot-network
+
+  # FastAPI Application
+  app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: autopilot-app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      FASTAPI_ENV: development
+      DATABASE_URL: postgresql://autopilot:autopilot_password@postgres:5432/autopilot_db
+      REDIS_URL: redis://redis:6379/0
+      QDRANT_URL: http://qdrant:6333
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: gpt-4
+      NOTION_API_KEY: ${NOTION_API_KEY}
+      TRELLO_API_KEY: ${TRELLO_API_KEY}
+      TRELLO_API_TOKEN: ${TRELLO_API_TOKEN}
+      GMAIL_CREDENTIALS_JSON: ${GMAIL_CREDENTIALS_JSON}
+      GOOGLE_DRIVE_CREDENTIALS_JSON: ${GOOGLE_DRIVE_CREDENTIALS_JSON}
+      OPENTELEMETRY_ENABLED: "true"
+      LOG_LEVEL: INFO
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+    networks:
+      - autopilot-network
+
+  # Celery Worker
+  celery-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: autopilot-celery-worker
+    command: celery -A app.tasks.celery_tasks worker --loglevel=info
+    environment:
+      FASTAPI_ENV: development
+      DATABASE_URL: postgresql://autopilot:autopilot_password@postgres:5432/autopilot_db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_MODEL: gpt-4
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials:ro
+    depends_on:
+      - postgres
+      - redis
+      - app
+    networks:
+      - autopilot-network
+
+  # Celery Beat (Scheduler)
+  celery-beat:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: autopilot-celery-beat
+    command: celery -A app.tasks.celery_tasks beat --loglevel=info
+    environment:
+      FASTAPI_ENV: development
+      DATABASE_URL: postgresql://autopilot:autopilot_password@postgres:5432/autopilot_db
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/1
+      CELERY_RESULT_BACKEND: redis://redis:6379/2
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      JAEGER_AGENT_HOST: jaeger
+      JAEGER_AGENT_PORT: 6831
+    volumes:
+      - .:/app
+      - ./logs:/app/logs
+      - ./credentials:/app/credentials:ro
+    depends_on:
+      - postgres
+      - redis
+      - app
+    networks:
+      - autopilot-network
+
+  # Flower (Celery Monitoring)
+  flower:
+    image: mher/flower:2.0
+    container_name: autopilot-flower
+    command: celery --broker=redis://redis:6379/1 flower --port=5555
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - celery-worker
+    networks:
+      - autopilot-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  qdrant_data:
+
+networks:
+  autopilot-network:
+    driver: bridge
