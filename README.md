@@ -13,7 +13,7 @@
 
 ## Executive Summary
 
-**AutoPilot** is a production-grade distributed system that leverages large language models and autonomous agents to automate complex, multi-step business workflows. The platform orchestrates specialized AI agents across meeting transcription, task extraction, data processing, and report generation—enabling significant operational efficiency gains for teams of any size.
+**AutoPilot** is a production grade distributed system that leverages large language models and autonomous agents to automate complex, multi-step business workflows. The platform orchestrates specialized AI agents across meeting transcription, task extraction, data processing, and report generation enabling significant operational efficiency gains for teams of any size.
 
 ### Key Capabilities
 
